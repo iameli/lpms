@@ -116,8 +116,97 @@ func TestSegmenter_StreamOrdering(t *testing.T) {
 		ffprobe -loglevel warning -i out_0.ts -show_streams -select_streams a | grep index=1
 	`
 	out, err = exec.Command("bash", "-c", cmd, dir).CombinedOutput()
+	t.Log(string(out))
 	if err != nil {
 		t.Error(err)
 	}
+}
+
+func TestTranscoder_UnevenRes(t *testing.T) {
+	// Ensure transcoding still works on input with uneven resolutions
+	// and that aspect ratio is maintained
+
+	dir, err := ioutil.TempDir("", t.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	InitFFmpeg() // hide some log noise
+
+	// Craft an input with an uneven res
+	// ffmpeg -loglevel warning -hide_banner -i inp.srt -i "$1/../transcoder/test.ts" -c:a copy -c:v mpeg4 -s 123x456 -c:s mov_text -t 1 -map 0:s -map 1:a -map 1:v -y test.mp4
+	cmd := `
+	    set -eux
+	    cd "$0"
+
+		# borrow the test.ts from the transcoder dir, output with 123x456 res
+		ffmpeg -loglevel warning -i "$1/../transcoder/test.ts" -c:a copy -c:v mpeg4 -s 123x456 test.mp4
+
+		# sanity check resulting resolutions
+		ffprobe -loglevel warning -i test.mp4 -show_streams -select_streams v | grep width=123
+		ffprobe -loglevel warning -i test.mp4 -show_streams -select_streams v | grep height=456
+	`
+	out, err := exec.Command("bash", "-c", cmd, dir, wd).CombinedOutput()
 	t.Log(string(out))
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = Transcode(dir+"/test.mp4", dir, []VideoProfile{P240p30fps16x9})
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Check output resolutions
+	cmd = `
+		set -eux
+		cd "$0"
+		ffprobe -loglevel warning -i out0test.mp4 -show_streams -select_streams v | grep width=64
+		ffprobe -loglevel warning -i out0test.mp4 -show_streams -select_streams v | grep height=240
+	`
+	out, err = exec.Command("bash", "-c", cmd, dir).CombinedOutput()
+	t.Log(string(out))
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Transpose input and do the same checks as above
+	cmd = `
+		set -eux
+		cd "$0"
+		ffmpeg -loglevel warning -i test.mp4 -c:a copy -c:v mpeg4 -vf transpose transposed.mp4
+
+		# sanity check resolutions
+		ffprobe -loglevel warning -i transposed.mp4 -show_streams -select_streams v | grep width=456
+		ffprobe -loglevel warning -i transposed.mp4 -show_streams -select_streams v | grep height=123
+	`
+	out, err = exec.Command("bash", "-c", cmd, dir, wd).CombinedOutput()
+	t.Log(string(out))
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = Transcode(dir+"/transposed.mp4", dir, []VideoProfile{P240p30fps16x9})
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Check output resolutions for transposed input
+	cmd = `
+		set -eux
+		cd "$0"
+		ffprobe -loglevel warning -i out0transposed.mp4 -show_streams -select_streams v | grep width=426
+		ffprobe -loglevel warning -i out0transposed.mp4 -show_streams -select_streams v | grep height=114
+	`
+	out, err = exec.Command("bash", "-c", cmd, dir).CombinedOutput()
+	t.Log(string(out))
+	if err != nil {
+		t.Error(err)
+	}
+
+	// TODO set / check sar/dar values?
 }
